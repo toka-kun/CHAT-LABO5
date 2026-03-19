@@ -866,20 +866,45 @@ video {
       document.getElementById('video-status').style.display = 'none';
 
       let data = null;
-      try { const res = await fetchWithTimeout(`https://yt-dl-test.vercel.app/dl/${encodeURIComponent(videoId)}`, {}, 6000); data = await res.json(); }
-      catch { const vs = document.getElementById('video-status'); vs.textContent = 'ストリーム取得に失敗しました（6秒タイムアウト）。'; vs.style.display = 'inline'; }
+      try { 
+        // 1. APIのエンドポイントを新しいURLに変更
+        const res = await fetchWithTimeout(`https://ytdlpinstance-vercel.vercel.app/stream/${encodeURIComponent(videoId)}`, {}, 6000); 
+        data = await res.json(); 
+      }
+      catch { 
+        const vs = document.getElementById('video-status'); 
+        vs.textContent = 'ストリーム取得に失敗しました（6秒タイムアウト）。'; 
+        vs.style.display = 'inline'; 
+      }
 
-      if (data && data.res_data) {
-        const d = data.res_data;
-        document.getElementById('video-title').textContent = d.title || '動画';
-        const vd = document.getElementById('video-duration'); vd.textContent = formatDuration(d.duration); vd.style.display = 'inline';
-        const vsrc = document.getElementById('video-source'); vsrc.textContent = d.source || 'YouTube'; vsrc.style.display = 'inline';
+      // 2. 新しいJSON構造に合わせてデータの読み取り方法を変更 (data.res_data -> data)
+      if (data) {
+        document.getElementById('video-title').textContent = data.title || '動画';
+        
+        // 注: 新しいAPIにduration（再生時間）やsourceが含まれていない場合は表示されません
+        if (data.duration) {
+          const vd = document.getElementById('video-duration'); 
+          vd.textContent = formatDuration(data.duration); 
+          vd.style.display = 'inline';
+        }
 
         let streamUrl = '';
-        if (Array.isArray(d.formats)) { const f360 = d.formats.find(f => (f.quality || '').toLowerCase().includes('360p')); streamUrl = f360 ? f360.url : ''; }
+        if (Array.isArray(data.formats) && data.formats.length > 0) { 
+          // 3. 画質の判定を resolution または itag に変更。見つからない場合は最初のフォーマットを使用
+          const targetFormat = data.formats.find(f => (f.resolution || '').includes('360') || f.itag === '18'); 
+          streamUrl = targetFormat ? targetFormat.url : data.formats[0].url; 
+        }
+        
         const vstat = document.getElementById('video-status');
-        if (streamUrl) { player.src = streamUrl; vstat.textContent = '再生準備完了'; vstat.style.display = 'inline'; player.play().catch(() => {}); }
-        else { vstat.textContent = '360pストリームが見つかりませんでした。'; vstat.style.display = 'inline'; }
+        if (streamUrl) { 
+          player.src = streamUrl; 
+          vstat.textContent = '再生準備完了'; 
+          vstat.style.display = 'inline'; 
+          player.play().catch(() => {}); 
+        } else { 
+          vstat.textContent = 'ストリームが見つかりませんでした。'; 
+          vstat.style.display = 'inline'; 
+        }
       }
 
       loadComments(videoId);
@@ -888,17 +913,6 @@ video {
       const authorFragment = title.split(' - ')[0].split('|')[0].trim();
       const query = `${authorFragment} ${title.split(' ').slice(0, 3).join(' ')}`.trim();
       loadRecommendations(query, videoId);
-    }
-
-    function formatDuration(seconds) {
-      if (!seconds || seconds <= 0) return '--:--';
-      const m = Math.floor(seconds / 60); const s = Math.floor(seconds % 60);
-      return `${m}:${String(s).padStart(2, '0')}`;
-    }
-    function formatCount(n) {
-      if (n >= 1_000_000) return (n/1_000_000).toFixed(1).replace(/\.0$/,'') + 'M';
-      if (n >= 1_000) return (n/1_000).toFixed(1).replace(/\.0$/,'') + 'K';
-      return String(n);
     }
 
     async function loadComments(videoId) {
