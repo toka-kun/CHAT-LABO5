@@ -1070,6 +1070,58 @@ video {
 
     (function init(){ showPage('home'); })();
     onRoute();
+
+    // --- 追加: キーボードショートカット機能 ---
+    document.addEventListener('keydown', (event) => {
+      // 検索ボックスなどに入力中の場合はショートカットを無視する
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) {
+        return;
+      }
+
+      // プレイヤーがまだ準備されていない場合は何もしない
+      if (!player || !player.src) return;
+
+      switch (event.key) {
+        case ' ': // スペースキー (再生/一時停止)
+          event.preventDefault(); // スペースキーでの画面スクロールを防ぐ
+          if (player.paused) {
+            player.play();
+          } else {
+            player.pause();
+          }
+          break;
+
+        case 'f':
+        case 'F': // fキー (全画面表示の切り替え)
+          event.preventDefault();
+          if (!document.fullscreenElement) {
+            // 全画面にする (Safari対応も含む)
+            if (player.requestFullscreen) {
+              player.requestFullscreen();
+            } else if (player.webkitRequestFullscreen) {
+              player.webkitRequestFullscreen();
+            }
+          } else {
+            // 全画面を解除する
+            if (document.exitFullscreen) {
+              document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+              document.webkitExitFullscreen();
+            }
+          }
+          break;
+
+        case 'ArrowRight': // 右矢印 (10秒進む)
+          event.preventDefault(); // 矢印キーでの画面スクロールを防ぐ
+          player.currentTime = Math.min(player.duration, player.currentTime + 10);
+          break;
+
+        case 'ArrowLeft': // 左矢印 (10秒戻る)
+          event.preventDefault();
+          player.currentTime = Math.max(0, player.currentTime - 10);
+          break;
+      }
+    });
   </script>
 </body>
 </html>
