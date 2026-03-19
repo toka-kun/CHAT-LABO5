@@ -868,7 +868,7 @@ video {
       let data = null;
       try { 
         // 1. APIのエンドポイントを新しいURLに変更
-        const res = await fetchWithTimeout(`https://ytdlpinstance-vercel.vercel.app/stream/${encodeURIComponent(videoId)}`, {}, 6000); 
+        const res = await fetchWithTimeout(`https://ytdlpinstance-vercel.vercel.app/stream/${encodeURIComponent(videoId)}`, {}, 10000); 
         data = await res.json(); 
       }
       catch { 
