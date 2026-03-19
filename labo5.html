@@ -931,6 +931,7 @@ video {
       if (minTubeInstances.length === 0) {
         try {
           const res = await fetch('https://raw.githubusercontent.com/Minotaur-ZAOU/test/refs/heads/main/min-tube-api.json');
+          if (!res.ok) throw new Error('Network response was not ok');
           const data = await res.json();
           if (Array.isArray(data) && data.length > 0) {
             minTubeInstances = data;
@@ -952,15 +953,19 @@ video {
 
       let json = null;
 
-      // 2. 取得したリストを上から順番に試す
+      // 2. 取得したリストを上から順番に試す（タイムアウトなしで確実に応答を待つ）
       for (const baseUrl of minTubeInstances) {
         try {
           const cleanBaseUrl = baseUrl.replace(/\/$/, ''); // 末尾の余計なスラッシュを削除
           const apiUrl = `${cleanBaseUrl}/api/comments/${encodeURIComponent(videoId)}`;
           
-          // タイムアウト（5秒）付きでリクエストを投げる
-          const res = await fetchWithTimeout(apiUrl, {}, 5000); 
-          if (!res.ok) continue; // HTTPエラー（500など）なら次のサーバーへ
+          // タイムアウトなしの通常のfetchを使用し、応答をしっかり待つ
+          const res = await fetch(apiUrl); 
+          
+          if (!res.ok) {
+            console.warn(`[Comments] ${baseUrl} はエラーを返しました (ステータス: ${res.status})。次のサーバーを試します。`);
+            continue; 
+          }
           
           const tempData = await res.json();
           
@@ -968,10 +973,12 @@ video {
           if (tempData && Array.isArray(tempData.comments)) {
             json = tempData;
             break; 
+          } else {
+            console.warn(`[Comments] ${baseUrl} からのデータ形式が不正です。次のサーバーを試します。`);
           }
         } catch (err) {
-          // タイムアウトやネットワークエラーの場合はコンソールに警告を出して次へ
-          console.warn(`[Comments] ${baseUrl} の取得に失敗しました。次のサーバーを試します。`);
+          // ネットワークエラーなどで取得に失敗した場合はコンソールに警告を出して次へ
+          console.warn(`[Comments] ${baseUrl} に接続できませんでした。次のサーバーを試します。`, err);
         }
       }
 
