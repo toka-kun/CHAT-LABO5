@@ -931,39 +931,85 @@ video {
       return String(n);
     }
 
+    // --- APIリストを取得するヘルパー関数 ---
+    async function getCommentApiList() {
+      const fallbackApis = [
+        "https://min-tube2-api.vercel.app",
+        "https://min-tube-api-3.vercel.app",
+        "https://min-tube-api4.vercel.app",
+        "https://server-minp.vercel.app",
+        "https://min-tube-api5.vercel.app"
+      ];
+      try {
+        const res = await fetch('https://raw.githubusercontent.com/Minotaur-ZAOU/test/refs/heads/main/min-tube-api.json');
+        if (!res.ok) return fallbackApis;
+        const list = await res.json();
+        // 取得したデータが配列で、かつ1つ以上要素があればそれを使う
+        return (Array.isArray(list) && list.length > 0) ? list : fallbackApis;
+      } catch {
+        return fallbackApis;
+      }
+    }
+
+    // --- 複数のAPIを順番に試す loadComments 関数 ---
     async function loadComments(videoId) {
       const status = document.getElementById('comments-status'); const list = document.getElementById('comments-list');
       status.classList.add('show'); list.innerHTML = '';
-      try {
-        const res = await fetch(`https://min-tube-api-3.vercel.app/api/comments/${encodeURIComponent(videoId)}`);
-        const json = await res.json();
-        document.getElementById('comment-count').textContent = `合計 ${formatCount(json.commentCount || 0)} 件`;
-        status.classList.remove('show');
-        const comments = Array.isArray(json.comments) ? json.comments : [];
-        comments.slice(0, 30).forEach(c => {
-          const authorThumb = (c.authorThumbnails && c.authorThumbnails[0] && c.authorThumbnails[0].url) || '';
-          const item = document.createElement('div'); item.className = 'comment';
-          const safeHtml = sanitizeContentHtml(c.contentHtml || escapeHTML(c.content || ''));
-          item.innerHTML = `
-            <img class="avatar" src="${authorThumb}" alt="${escapeHTML(c.author || '')}">
-            <div class="comment-meta">
-              <div class="comment-author">
-                <span>${escapeHTML(c.author || '')}</span>
-                ${c.verified ? '<span class="author-badge">認証済み</span>' : ''}
-                ${c.authorIsChannelOwner ? '<span class="author-badge">チャンネル所有者</span>' : ''}
-                ${c.isPinned ? '<span class="author-badge">固定</span>' : ''}
+      
+      const apis = await getCommentApiList();
+      let success = false;
+
+      // リストのAPIを順番に試行
+      for (const apiBase of apis) {
+        try {
+          // URL末尾の不要なスラッシュを念のため除去
+          const baseUrl = apiBase.replace(/\/$/, ''); 
+          const res = await fetch(`${baseUrl}/api/comments/${encodeURIComponent(videoId)}`);
+          if (!res.ok) continue; // エラーが返ってきたら次のAPIへ
+          
+          const json = await res.json();
+          document.getElementById('comment-count').textContent = `合計 ${formatCount(json.commentCount || 0)} 件`;
+          status.classList.remove('show');
+          
+          // --- ここからの描画ロジックは既存のものを完全維持 ---
+          const comments = Array.isArray(json.comments) ? json.comments : [];
+          comments.slice(0, 30).forEach(c => {
+            const authorThumb = (c.authorThumbnails && c.authorThumbnails[0] && c.authorThumbnails[0].url) || '';
+            const item = document.createElement('div'); item.className = 'comment';
+            const safeHtml = sanitizeContentHtml(c.contentHtml || escapeHTML(c.content || ''));
+            item.innerHTML = `
+              <img class="avatar" src="${authorThumb}" alt="${escapeHTML(c.author || '')}">
+              <div class="comment-meta">
+                <div class="comment-author">
+                  <span>${escapeHTML(c.author || '')}</span>
+                  ${c.verified ? '<span class="author-badge">認証済み</span>' : ''}
+                  ${c.authorIsChannelOwner ? '<span class="author-badge">チャンネル所有者</span>' : ''}
+                  ${c.isPinned ? '<span class="author-badge">固定</span>' : ''}
+                </div>
+                <div class="comment-content">${safeHtml}</div>
+                <div class="comment-actions">
+                  <span>👍 ${formatCount(c.likeCount || 0)}</span>
+                  <span class="muted">${escapeHTML(c.publishedText || '')}</span>
+                  ${c.replies && c.replies.replyCount ? `<span>返信 ${formatCount(c.replies.replyCount)}</span>` : ''}
+                </div>
               </div>
-              <div class="comment-content">${safeHtml}</div>
-              <div class="comment-actions">
-                <span>👍 ${formatCount(c.likeCount || 0)}</span>
-                <span class="muted">${escapeHTML(c.publishedText || '')}</span>
-                ${c.replies && c.replies.replyCount ? `<span>返信 ${formatCount(c.replies.replyCount)}</span>` : ''}
-              </div>
-            </div>
-          `;
-          list.appendChild(item);
-        });
-      } catch { status.innerHTML = `<span class="muted">コメントの取得に失敗しました。</span>`; }
+            `;
+            list.appendChild(item);
+          });
+          // --------------------------------------------------
+
+          success = true;
+          break; // データ取得と描画に成功したらループを抜ける
+        } catch {
+          // 通信エラーやJSONパースエラーの場合は次のAPIを試す
+          continue; 
+        }
+      }
+
+      // すべてのAPIで失敗した場合
+      if (!success) {
+        status.innerHTML = `<span class="muted">コメントの取得に失敗しました。</span>`;
+      }
     }
 
     function sanitizeContentHtml(html) {
