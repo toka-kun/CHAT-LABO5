@@ -868,7 +868,7 @@ video {
       let data = null;
       try { 
         // 1. APIのエンドポイントを新しいURLに変更
-        const res = await fetchWithTimeout(`https://ytdlpinstance-vercel.vercel.app/stream/${encodeURIComponent(videoId)}`, {}, 10000); 
+        const res = await fetchWithTimeout(`https://ytdlpinstance-vercel.vercel.app/stream/${encodeURIComponent(videoId)}`, {}, 6000); 
         data = await res.json(); 
       }
       catch { 
@@ -915,80 +915,17 @@ video {
       loadRecommendations(query, videoId);
     }
 
-    // APIリストを保存しておくための変数（無駄な通信を減らすため）
-    let cachedApiUrls = null;
-
-    const fallbackApiUrls = [
-      "https://min-tube2-api.vercel.app",
-      "https://min-tube-api-3.vercel.app",
-      "https://min-tube-api4.vercel.app",
-      "https://server-minp.vercel.app",
-      "https://min-tube-api5.vercel.app"
-    ];
-
     async function loadComments(videoId) {
-      const status = document.getElementById('comments-status'); 
-      const list = document.getElementById('comments-list');
-      const countEl = document.getElementById('comment-count');
-      
-      // ステータス表示をリセット
-      status.innerHTML = '<div class="spinner"></div><span>コメントを取得中…</span>';
-      status.classList.add('show'); 
-      list.innerHTML = '';
-      if (countEl) countEl.textContent = '';
-
+      const status = document.getElementById('comments-status'); const list = document.getElementById('comments-list');
+      status.classList.add('show'); list.innerHTML = '';
       try {
-        // 1. APIリストの取得（キャッシュがなければ取得する）
-        if (!cachedApiUrls) {
-          try {
-            const listRes = await fetch("https://raw.githubusercontent.com/Minotaur-ZAOU/test/refs/heads/main/min-tube-api.json");
-            if (!listRes.ok) throw new Error("APIリストのステータスエラー");
-            cachedApiUrls = await listRes.json();
-          } catch (err) {
-            // 取得エラー時はフォールバックのリストを代入する
-            console.warn("GitHubからのAPIリスト取得に失敗したため、予備のAPIリストを使用します。", err);
-            cachedApiUrls = fallbackApiUrls;
-          }
-        }
-
-        let json = null;
-        let isSuccess = false;
-
-        // 2. リスト内のURLを順番に試す
-        for (const baseUrl of cachedApiUrls) {
-          try {
-            // 末尾にスラッシュがある場合を考慮してクリーンに結合
-            const apiUrl = `${baseUrl.replace(/\/$/, '')}/api/comments/${encodeURIComponent(videoId)}`;
-            const res = await fetch(apiUrl);
-            
-            if (res.ok) {
-              json = await res.json();
-              isSuccess = true;
-              break; // 取得に成功したらループを抜ける
-            }
-          } catch (err) {
-            // ネットワークエラーなどの場合はコンソールに警告を出して次へ
-            console.warn(`${baseUrl} からの取得に失敗しました。次を試します...`, err);
-          }
-        }
-
-        // 全てのAPIを試してもダメだった場合
-        if (!isSuccess || !json) {
-          throw new Error("すべてのAPIサーバーでコメント取得に失敗しました");
-        }
-
-        // 3. コメントの描画処理 (LABO5の既存の表示処理)
-        const comments = Array.isArray(json.comments) ? json.comments : [];
-        if (countEl) countEl.textContent = `合計 ${formatCount(json.commentCount || comments.length)} 件`;
+        const res = await fetch(`https://min-tube-api-3.vercel.app/api/comments/${encodeURIComponent(videoId)}`);
+        const json = await res.json();
+        document.getElementById('comment-count').textContent = `合計 ${formatCount(json.commentCount || 0)} 件`;
         status.classList.remove('show');
-
-        if (comments.length === 0) {
-          list.innerHTML = '<div class="muted" style="padding: 10px 0;">コメントがありません。</div>';
-          return;
-        }
-
+        const comments = Array.isArray(json.comments) ? json.comments : [];
         comments.slice(0, 30).forEach(c => {
-          const authorThumb = (c.authorThumbnails && c.authorThumbnails.length > 0) ? c.authorThumbnails[0].url : '';
+          const authorThumb = (c.authorThumbnails && c.authorThumbnails[0] && c.authorThumbnails[0].url) || '';
           const item = document.createElement('div'); item.className = 'comment';
           const safeHtml = sanitizeContentHtml(c.contentHtml || escapeHTML(c.content || ''));
           item.innerHTML = `
@@ -1010,11 +947,7 @@ video {
           `;
           list.appendChild(item);
         });
-
-      } catch (e) {
-        console.error(e);
-        status.innerHTML = '<span class="muted">コメントの取得に失敗しました。</span>';
-      }
+      } catch { status.innerHTML = `<span class="muted">コメントの取得に失敗しました。</span>`; }
     }
 
     function sanitizeContentHtml(html) {
