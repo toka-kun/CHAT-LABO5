@@ -904,6 +904,7 @@ video {
           player.src = streamUrl; 
           vstat.textContent = '再生準備完了'; 
           vstat.style.display = 'inline'; 
+          player.loop = true;
           player.play().catch(() => {}); 
         }
         else { 
