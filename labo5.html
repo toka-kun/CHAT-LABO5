@@ -915,39 +915,100 @@ video {
       loadRecommendations(query, videoId);
     }
 
+    // APIリストをキャッシュするためのグローバル変数を追加
+    let minTubeInstances = [];
+
     async function loadComments(videoId) {
-      const status = document.getElementById('comments-status'); const list = document.getElementById('comments-list');
-      status.classList.add('show'); list.innerHTML = '';
-      try {
-        const res = await fetch(`https://min-tube-api-3.vercel.app/api/comments/${encodeURIComponent(videoId)}`);
-        const json = await res.json();
-        document.getElementById('comment-count').textContent = `合計 ${formatCount(json.commentCount || 0)} 件`;
-        status.classList.remove('show');
-        const comments = Array.isArray(json.comments) ? json.comments : [];
-        comments.slice(0, 30).forEach(c => {
-          const authorThumb = (c.authorThumbnails && c.authorThumbnails[0] && c.authorThumbnails[0].url) || '';
-          const item = document.createElement('div'); item.className = 'comment';
-          const safeHtml = sanitizeContentHtml(c.contentHtml || escapeHTML(c.content || ''));
-          item.innerHTML = `
-            <img class="avatar" src="${authorThumb}" alt="${escapeHTML(c.author || '')}">
-            <div class="comment-meta">
-              <div class="comment-author">
-                <span>${escapeHTML(c.author || '')}</span>
-                ${c.verified ? '<span class="author-badge">認証済み</span>' : ''}
-                ${c.authorIsChannelOwner ? '<span class="author-badge">チャンネル所有者</span>' : ''}
-                ${c.isPinned ? '<span class="author-badge">固定</span>' : ''}
-              </div>
-              <div class="comment-content">${safeHtml}</div>
-              <div class="comment-actions">
-                <span>👍 ${formatCount(c.likeCount || 0)}</span>
-                <span class="muted">${escapeHTML(c.publishedText || '')}</span>
-                ${c.replies && c.replies.replyCount ? `<span>返信 ${formatCount(c.replies.replyCount)}</span>` : ''}
-              </div>
+      const status = document.getElementById('comments-status'); 
+      const list = document.getElementById('comments-list');
+      
+      // ステータス表示をリセット
+      status.innerHTML = '<div class="spinner"></div><span>コメントを取得中…</span>';
+      status.classList.add('show'); 
+      list.innerHTML = '';
+
+      // 1. インスタンスリストが未取得の場合はGitHubから取得する
+      if (minTubeInstances.length === 0) {
+        try {
+          const res = await fetch('https://raw.githubusercontent.com/Minotaur-ZAOU/test/refs/heads/main/min-tube-api.json');
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            minTubeInstances = data;
+          } else {
+            throw new Error('List is empty');
+          }
+        } catch (e) {
+          // GitHubから取得できなかった場合は、指定された予備のインスタンスリストを使用する
+          minTubeInstances = [
+            "https://min-tube2-api.vercel.app",
+            "https://min-tube-api-3.vercel.app",
+            "https://min-tube-api4.vercel.app",
+            "https://server-minp.vercel.app",
+            "https://min-tube-api5.vercel.app"
+          ];
+          console.warn('GitHubからのAPIリスト取得に失敗したため、デフォルトのリストを使用します。');
+        }
+      }
+
+      let json = null;
+
+      // 2. 取得したリストを上から順番に試す
+      for (const baseUrl of minTubeInstances) {
+        try {
+          const cleanBaseUrl = baseUrl.replace(/\/$/, ''); // 末尾の余計なスラッシュを削除
+          const apiUrl = `${cleanBaseUrl}/api/comments/${encodeURIComponent(videoId)}`;
+          
+          // タイムアウト（5秒）付きでリクエストを投げる
+          const res = await fetchWithTimeout(apiUrl, {}, 5000); 
+          if (!res.ok) continue; // HTTPエラー（500など）なら次のサーバーへ
+          
+          const tempData = await res.json();
+          
+          // 正常なコメントデータが入っていれば採用してループを抜ける
+          if (tempData && Array.isArray(tempData.comments)) {
+            json = tempData;
+            break; 
+          }
+        } catch (err) {
+          // タイムアウトやネットワークエラーの場合はコンソールに警告を出して次へ
+          console.warn(`[Comments] ${baseUrl} の取得に失敗しました。次のサーバーを試します。`);
+        }
+      }
+
+      // 3. 全てのサーバーを試してもダメだった場合
+      if (!json) {
+        status.innerHTML = '<span class="muted">コメントの取得に失敗しました（利用可能なサーバーがありません）。</span>';
+        return;
+      }
+
+      // 4. コメントの描画処理
+      document.getElementById('comment-count').textContent = `合計 ${formatCount(json.commentCount || 0)} 件`;
+      status.classList.remove('show');
+      const comments = json.comments;
+      
+      comments.slice(0, 30).forEach(c => {
+        const authorThumb = (c.authorThumbnails && c.authorThumbnails[0] && c.authorThumbnails[0].url) || '';
+        const item = document.createElement('div'); item.className = 'comment';
+        const safeHtml = sanitizeContentHtml(c.contentHtml || escapeHTML(c.content || ''));
+        item.innerHTML = `
+          <img class="avatar" src="${authorThumb}" alt="${escapeHTML(c.author || '')}">
+          <div class="comment-meta">
+            <div class="comment-author">
+              <span>${escapeHTML(c.author || '')}</span>
+              ${c.verified ? '<span class="author-badge">認証済み</span>' : ''}
+              ${c.authorIsChannelOwner ? '<span class="author-badge">チャンネル所有者</span>' : ''}
+              ${c.isPinned ? '<span class="author-badge">固定</span>' : ''}
             </div>
-          `;
-          list.appendChild(item);
-        });
-      } catch { status.innerHTML = `<span class="muted">コメントの取得に失敗しました。</span>`; }
+            <div class="comment-content">${safeHtml}</div>
+            <div class="comment-actions">
+              <span>👍 ${formatCount(c.likeCount || 0)}</span>
+              <span class="muted">${escapeHTML(c.publishedText || '')}</span>
+              ${c.replies && c.replies.replyCount ? `<span>返信 ${formatCount(c.replies.replyCount)}</span>` : ''}
+            </div>
+          </div>
+        `;
+        list.appendChild(item);
+      });
     }
 
     function sanitizeContentHtml(html) {
