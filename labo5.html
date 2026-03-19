@@ -915,8 +915,16 @@ video {
       loadRecommendations(query, videoId);
     }
 
-    // APIリストを保存しておくための変数
-    let minTubeInstances = null;
+    // APIリストを保存しておくための変数（無駄な通信を減らすため）
+    let cachedApiUrls = null;
+
+    const fallbackApiUrls = [
+      "https://min-tube2-api.vercel.app",
+      "https://min-tube-api-3.vercel.app",
+      "https://min-tube-api4.vercel.app",
+      "https://server-minp.vercel.app",
+      "https://min-tube-api5.vercel.app"
+    ];
 
     async function loadComments(videoId) {
       const status = document.getElementById('comments-status'); 
@@ -931,35 +939,26 @@ video {
 
       try {
         // 1. APIリストの取得（キャッシュがなければ取得する）
-        if (!minTubeInstances) {
+        if (!cachedApiUrls) {
           try {
             const listRes = await fetch("https://raw.githubusercontent.com/Minotaur-ZAOU/test/refs/heads/main/min-tube-api.json");
-            if (!listRes.ok) throw new Error("APIリストの取得に失敗しました");
-            minTubeInstances = await listRes.json();
-          } catch (e) {
-            // GitHubから取得できなかった場合は予備のリストを使用
-            minTubeInstances = [
-              "https://min-tube2-api.vercel.app",
-              "https://min-tube-api-3.vercel.app",
-              "https://min-tube-api4.vercel.app",
-              "https://server-minp.vercel.app",
-              "https://min-tube-api5.vercel.app"
-            ];
-            console.warn("GitHubからのAPIリスト取得に失敗したため、デフォルトのリストを使用します。");
+            if (!listRes.ok) throw new Error("APIリストのステータスエラー");
+            cachedApiUrls = await listRes.json();
+          } catch (err) {
+            // 取得エラー時はフォールバックのリストを代入する
+            console.warn("GitHubからのAPIリスト取得に失敗したため、予備のAPIリストを使用します。", err);
+            cachedApiUrls = fallbackApiUrls;
           }
         }
 
         let json = null;
         let isSuccess = false;
 
-        // 2. リスト内のURLを順番に試す (player.html と全く同じロジック)
-        for (const baseUrl of minTubeInstances) {
+        // 2. リスト内のURLを順番に試す
+        for (const baseUrl of cachedApiUrls) {
           try {
             // 末尾にスラッシュがある場合を考慮してクリーンに結合
-            const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-            const apiUrl = `${cleanBaseUrl}/api/comments/${encodeURIComponent(videoId)}`;
-            
-            // タイムアウトを設けず、標準のfetchでサーバーの応答をしっかり待つ
+            const apiUrl = `${baseUrl.replace(/\/$/, '')}/api/comments/${encodeURIComponent(videoId)}`;
             const res = await fetch(apiUrl);
             
             if (res.ok) {
@@ -969,7 +968,7 @@ video {
             }
           } catch (err) {
             // ネットワークエラーなどの場合はコンソールに警告を出して次へ
-            console.warn(`[Comments] ${baseUrl} からの取得に失敗しました。次を試します...`, err);
+            console.warn(`${baseUrl} からの取得に失敗しました。次を試します...`, err);
           }
         }
 
@@ -978,7 +977,7 @@ video {
           throw new Error("すべてのAPIサーバーでコメント取得に失敗しました");
         }
 
-        // 3. コメントの描画処理
+        // 3. コメントの描画処理 (LABO5の既存の表示処理)
         const comments = Array.isArray(json.comments) ? json.comments : [];
         if (countEl) countEl.textContent = `合計 ${formatCount(json.commentCount || comments.length)} 件`;
         status.classList.remove('show');
