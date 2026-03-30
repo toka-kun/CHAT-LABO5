@@ -657,109 +657,84 @@ video {
   <div id="hidden-cse" class="gcse-searchresults-only"></div>
 
   <script>
-    // Router
-    const pages = {
-      home: document.getElementById('page-home'),
-      search: document.getElementById('page-search'),
-      watch: document.getElementById('page-watch'),
-    };
-    const appbar = document.getElementById('appbar');
-    const backBtn = document.getElementById('back-btn');
-    const player = document.getElementById('player');
-
-    function stopVideo() {
-      try { player.pause(); player.removeAttribute('src'); player.load(); } catch {}
-    }
-
-    function showPage(name) {
-      const prev = Object.entries(pages).find(([key, el]) => el.classList.contains('active'));
-      if (prev && prev[0] === 'watch' && name !== 'watch') stopVideo();
-
-      Object.entries(pages).forEach(([_, el]) => { el.classList.remove('active'); el.setAttribute('hidden', ''); });
-      const page = pages[name]; page.classList.add('active'); page.removeAttribute('hidden');
-
-      if (name === 'watch') {
-        appbar.classList.add('hidden'); backBtn.classList.add('show');
-        setStatus('comments-status', true); setStatus('recs-status', true);
-        document.getElementById('comments-list').innerHTML = ''; document.getElementById('recs-list').innerHTML = '';
-        window.scrollTo({ top: 0, behavior: 'instant' });
-      } else {
-        appbar.classList.remove('hidden'); backBtn.classList.remove('show');
-        setStatus('comments-status', false); setStatus('recs-status', false);
-      }
-      if (name === 'search') {
-        setStatus('search-status', true);
-        document.getElementById('results').innerHTML = '';
-        document.getElementById('next-page-btn').disabled = true;
-      } else {
-        setStatus('search-status', false);
-      }
-    }
-
-    function setStatus(id, show) {
-      const el = document.getElementById(id); if (!el) return;
-      if (show) el.classList.add('show'); else el.classList.remove('show');
-    }
-
-    function parseHash() {
-      const h = location.hash || '#/';
-      if (h.startsWith('#/search')) {
-        const m = h.match(/#\/search\?q=(.*)$/); const q = m ? decodeURIComponent(m[1]) : '';
-        return { page: 'search', q };
-      } else if (h.startsWith('#/watch')) {
-        const m = h.match(/#\/watch\?v=([^&]+)/); const v = m ? decodeURIComponent(m[1]) : '';
-        return { page: 'watch', v };
-      }
-      return { page: 'home' };
-    }
-
-    function navigateTo(route) { history.pushState({}, '', route); onRoute(); }
-    window.addEventListener('popstate', onRoute);
-    window.addEventListener('hashchange', onRoute);
-
-    backBtn.addEventListener('click', () => {
-      const q = sessionStorage.getItem('lastQuery') || '';
-      if (q) navigateTo(`#/search?q=${encodeURIComponent(q)}`); else navigateTo('#/');
-    });
-
-    // Forms
-    document.getElementById('hero-search-form').addEventListener('submit', (e) => {
-      e.preventDefault(); const q = document.getElementById('hero-search-input').value.trim(); if (!q) return;
-      navigateTo(`#/search?q=${encodeURIComponent(q)}`);
-    });
-    document.getElementById('nav-search-form').addEventListener('submit', (e) => {
-      e.preventDefault(); const q = document.getElementById('nav-search-input').value.trim(); if (!q) return;
-      navigateTo(`#/search?q=${encodeURIComponent(q)}`);
-    });
-    document.getElementById('nav-home').addEventListener('click', (e) => { e.preventDefault(); navigateTo('#/'); });
-    document.getElementById('watch-search-form').addEventListener('submit', (e) => {
-      e.preventDefault(); const q = document.getElementById('watch-search-input').value.trim(); if (!q) return;
-      navigateTo(`#/search?q=${encodeURIComponent(q)}`);
-    });
-
-    // CSE init
-    window.__gcse = { callback: function() { initCSE(); onRoute(); } };
+    // 状態管理
+    let pagination = { hasCursor: false, currentIndex: 0, totalPages: 1, loadingNext: false };
     let cseHiddenElem = null;
+
+    // ユーティリティ関数
+    function escapeHTML(str) {
+      return str.replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[tag] || tag));
+    }
+    function youTubeThumb(id) {
+      return `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+    }
+    function getVideoIdFromUrl(url) {
+      const match = url.match(/(?:v=|v\/|embed\/|youtu\.be\/)([^&?#]+)/);
+      return match ? match[1] : null;
+    }
+    function setStatus(id, show) {
+      const el = document.getElementById(id);
+      if (el) {
+        if (show) el.classList.add('show');
+        else el.classList.remove('show');
+      }
+    }
+
+    // 画面切り替え
+    function showView(viewId) {
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.getElementById(viewId).classList.add('active');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+    function navigateTo(hash) {
+      window.location.hash = hash;
+    }
+
+    // ルーティング
+    function handleRoute() {
+      const hash = window.location.hash;
+      if (hash.startsWith('#/watch')) {
+        const params = new URLSearchParams(hash.split('?')[1]);
+        const v = params.get('v');
+        if (v) {
+          showView('view-watch');
+          loadWatch(v);
+        } else {
+          navigateTo('#/');
+        }
+      } else if (hash.startsWith('#/results')) {
+        const params = new URLSearchParams(hash.split('?')[1]);
+        const q = params.get('q');
+        if (q) {
+          showView('view-results');
+          executeSearch(q);
+        } else {
+          navigateTo('#/');
+        }
+      } else {
+        showView('view-home');
+      }
+    }
+
+    // Google Custom Search (CSE) の初期化
     function initCSE() {
       try {
-        google.search.cse.element.render({ div: "hidden-cse", tag: 'searchresults-only', attributes: { linkTarget: '_self' } });
-        cseHiddenElem = google.search.cse.element.getElement('hidden-cse') || google.search.cse.element.getElement('searchresults-only0');
-      } catch { setTimeout(initCSE, 200); }
+        if (window.google && google.search && google.search.cse && google.search.cse.element) {
+          if (!document.querySelector('.gsc-control-cse')) {
+            google.search.cse.element.render({ div: "hidden-cse", tag: 'searchresults-only', attributes: { linkTarget: '_self' } });
+          }
+          cseHiddenElem = google.search.cse.element.getElement('hidden-cse') || google.search.cse.element.getElement('searchresults-only0');
+        } else {
+          setTimeout(initCSE, 200);
+        }
+      } catch (e) {
+        console.warn("CSE Init Error", e);
+      }
     }
 
-    function getVideoIdFromUrl(href) {
-      try {
-        if (href.includes('youtu.be/')) { const u = new URL(href); const seg = u.pathname.split('/').filter(Boolean); return seg[0] || null; }
-        const u = new URL(href); if (u.hostname.includes('youtube.com')) return u.searchParams.get('v');
-      } catch {}
-      return null;
-    }
-    function youTubeThumb(videoId, size='hqdefault') { return `https://i.ytimg.com/vi/${videoId}/${size}.jpg`; }
-    function escapeHTML(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-
-    // Search + pagination
-    let pagination = { hasCursor: false, currentIndex: 0, totalPages: 1, loadingNext: false };
-
+    // 検索の実行
     function executeSearch(query) {
       document.getElementById('search-chip').textContent = query;
       document.getElementById('nav-search-input').value = query;
@@ -768,98 +743,166 @@ video {
       sessionStorage.setItem('lastQuery', query);
       pagination = { hasCursor: false, currentIndex: 0, totalPages: 1, loadingNext: false };
       document.getElementById('next-page-btn').disabled = true;
-      try {
-        const elem = cseHiddenElem || google.search.cse.element.getElement('hidden-cse') || google.search.cse.element.getElement('searchresults-only0');
-        if (elem) {
-          elem.execute(`site:youtube.com ${query}`);
-          setTimeout(() => { renderSearchResultsFromCSE(); setupPaginationState(); }, 600);
-        } else { setTimeout(() => executeSearch(query), 200); }
-      } catch { setTimeout(() => executeSearch(query), 200); }
+
+      const attemptExecute = () => {
+        try {
+          const elem = cseHiddenElem || (window.google && google.search && google.search.cse && google.search.cse.element && (google.search.cse.element.getElement('hidden-cse') || google.search.cse.element.getElement('searchresults-only0')));
+          if (elem) {
+            const container = document.getElementById('hidden-cse');
+            if (container) {
+              const resContainer = container.querySelector('.gsc-results');
+              if (resContainer) resContainer.innerHTML = '';
+            }
+            elem.execute(`site:youtube.com ${query}`);
+            waitForSearchResults(0);
+          } else {
+            setTimeout(attemptExecute, 200);
+          }
+        } catch (e) {
+          setTimeout(attemptExecute, 200);
+        }
+      };
+      attemptExecute();
     }
 
-    function renderSearchResultsFromCSE(append=false) {
+    // 検索結果が反映されるまで待機
+    function waitForSearchResults(attempts) {
+      if (attempts > 50) {
+        setStatus('search-status', false);
+        document.getElementById('results').innerHTML = '<div class="muted">検索結果の取得にタイムアウトしました。再度お試しください。</div>';
+        return;
+      }
       const container = document.getElementById('hidden-cse');
+      if (!container) return setTimeout(() => waitForSearchResults(attempts + 1), 200);
+
       const rawResults = container.querySelectorAll('.gsc-webResult.gsc-result');
-      if (!rawResults.length) return;
-      const resultsHost = document.getElementById('results');
-      if (!append) { setStatus('search-status', false); resultsHost.innerHTML = ''; }
-      rawResults.forEach(res => {
-        const a = res.querySelector('.gs-title a'); if (!a || !a.href) return;
-        const href = a.href; const title = (a.textContent || '').trim();
-        const snipEl = res.querySelector('.gs-snippet'); const snippet = snipEl ? snipEl.textContent.trim() : '';
-        const vid = getVideoIdFromUrl(href); if (!vid) return;
-        let channel = ''; const urlEl = res.querySelector('.gs-visibleUrl');
-        if (urlEl) channel = urlEl.textContent.replace(/https?:\/\/(www\.)?youtube\.com\/.*/i, '').trim();
-        if (!channel && snippet) { const m = snippet.match(/by ([^•–-]+)/i); if (m) channel = m[1].trim(); }
+      const noResultsText = container.innerText || "";
 
-        const card = document.createElement('div');
-        card.className = 'result-card';
-        card.innerHTML = `
-          <img class="thumb" src="${youTubeThumb(vid)}" alt="Thumbnail">
-          <div class="res-meta">
-            <div class="res-title">${escapeHTML(title)}</div>
-            <div class="res-channel">${escapeHTML(channel || 'YouTube')}</div>
-            <div class="res-snippet">${escapeHTML(snippet)}</div>
-          </div>
-        `;
-        card.addEventListener('click', () => navigateTo(`#/watch?v=${encodeURIComponent(vid)}`));
-        resultsHost.appendChild(card);
-      });
-    }
-
-    function setupPaginationState() {
-      const container = document.getElementById('hidden-cse');
-      const cursorPages = container.querySelectorAll('.gsc-cursor-page');
-      const nextBtn = document.getElementById('next-page-btn');
-      if (cursorPages && cursorPages.length > 0) {
-        pagination.hasCursor = true; pagination.totalPages = cursorPages.length;
-        let activeIndex = 0;
-        cursorPages.forEach((p, i) => { if (p.getAttribute('aria-current') === 'page' || p.classList.contains('gsc-cursor-current-page')) activeIndex = i; });
-        pagination.currentIndex = activeIndex;
-        nextBtn.disabled = (pagination.currentIndex >= pagination.totalPages - 1);
+      if (rawResults && rawResults.length > 0) {
+        renderSearchResultsFromCSE();
+        setupPaginationState();
+      } else if (noResultsText.includes('一致する') || noResultsText.includes('見つかりません') || noResultsText.includes('No results')) {
+        setStatus('search-status', false);
+        document.getElementById('results').innerHTML = '<div class="muted">検索結果が見つかりませんでした。</div>';
       } else {
-        pagination.hasCursor = false; pagination.totalPages = 1; pagination.currentIndex = 0; nextBtn.disabled = true;
+        setTimeout(() => waitForSearchResults(attempts + 1), 200);
       }
     }
 
+    // 検索結果を画面に描画
+    function renderSearchResultsFromCSE(append = false) {
+      const container = document.getElementById('hidden-cse');
+      if (!container) return;
+      const rawResults = container.querySelectorAll('.gsc-webResult.gsc-result');
+      const resultsDiv = document.getElementById('results');
+      if (!append) resultsDiv.innerHTML = '';
+      setStatus('search-status', false);
+
+      let count = 0;
+      rawResults.forEach(r => {
+        const a = r.querySelector('.gs-title a');
+        if (!a || !a.href) return;
+        const vid = getVideoIdFromUrl(a.href);
+        if (!vid) return;
+        const title = (a.textContent || '').trim();
+        let channel = '';
+        const urlEl = r.querySelector('.gs-visibleUrl');
+        if (urlEl) channel = urlEl.textContent.replace(/https?:\/\/(www\.)?youtube\.com\/.*/i, '').trim();
+        const snipEl = r.querySelector('.gs-snippet');
+        if (!channel && snipEl) {
+          const m = snipEl.textContent.match(/by ([^•–-]+)/i);
+          if (m) channel = m[1].trim();
+        }
+        if (document.querySelector(`.video-card[data-vid="${vid}"]`)) return;
+
+        const card = document.createElement('div');
+        card.className = 'video-card';
+        card.dataset.vid = vid;
+        card.innerHTML = `
+          <div class="thumb-wrapper">
+            <img class="thumb" src="${youTubeThumb(vid)}" alt="Thumbnail" loading="lazy">
+          </div>
+          <div class="info">
+            <div class="title">${escapeHTML(title)}</div>
+            <div class="channel">${escapeHTML(channel || 'YouTube')}</div>
+          </div>
+        `;
+        card.addEventListener('click', () => navigateTo(`#/watch?v=${encodeURIComponent(vid)}`));
+        resultsDiv.appendChild(card);
+        count++;
+      });
+
+      if (!append && count === 0) {
+        resultsDiv.innerHTML = '<div class="muted">動画が見つかりませんでした。</div>';
+      }
+    }
+
+    // ページネーションの設定
+    function setupPaginationState() {
+      const container = document.getElementById('hidden-cse');
+      if (!container) return;
+      const cursorPages = container.querySelectorAll('.gsc-cursor-page');
+      if (cursorPages && cursorPages.length > 0) {
+        pagination.hasCursor = true;
+        pagination.totalPages = cursorPages.length;
+        cursorPages.forEach((p, i) => {
+          if (p.getAttribute('aria-current') === 'page' || p.classList.contains('gsc-cursor-current-page')) {
+            pagination.currentIndex = i;
+          }
+        });
+        document.getElementById('next-page-btn').disabled = (pagination.currentIndex >= pagination.totalPages - 1);
+      } else {
+        pagination.hasCursor = false;
+        document.getElementById('next-page-btn').disabled = true;
+      }
+    }
+
+    // 次のページへ
     function gotoNextPage() {
-      if (pagination.loadingNext) return; pagination.loadingNext = true;
+      if (pagination.loadingNext) return;
+      pagination.loadingNext = true;
       const nextBtn = document.getElementById('next-page-btn');
       if (pagination.hasCursor) {
         const container = document.getElementById('hidden-cse');
         const cursorPages = container.querySelectorAll('.gsc-cursor-page');
         const nextIndex = pagination.currentIndex + 1;
-        if (!cursorPages[nextIndex]) { pagination.loadingNext = false; nextBtn.disabled = true; return; }
+        if (!cursorPages[nextIndex]) {
+          pagination.loadingNext = false; nextBtn.disabled = true; return;
+        }
         cursorPages[nextIndex].dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        setTimeout(() => { renderSearchResultsFromCSE(true); setupPaginationState(); pagination.loadingNext = false; }, 700);
-      } else { pagination.loadingNext = false; nextBtn.disabled = true; }
+        waitForNextPageResults(nextIndex, 0);
+      } else {
+        pagination.loadingNext = false; nextBtn.disabled = true;
+      }
     }
 
-    window.addEventListener('scroll', () => {
-      const route = parseHash(); if (route.page !== 'search') return;
-      const nextBtn = document.getElementById('next-page-btn'); if (nextBtn.disabled) return;
-      const nearBottom = (window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 120);
-      if (nearBottom) gotoNextPage();
-    });
-    document.getElementById('next-page-btn').addEventListener('click', gotoNextPage);
+    function waitForNextPageResults(expectedIndex, attempts) {
+      if (attempts > 50) { pagination.loadingNext = false; return; }
+      const container = document.getElementById('hidden-cse');
+      const cursorPages = container.querySelectorAll('.gsc-cursor-page');
+      let activeIndex = -1;
+      if (cursorPages) {
+        cursorPages.forEach((p, i) => {
+          if (p.getAttribute('aria-current') === 'page' || p.classList.contains('gsc-cursor-current-page')) activeIndex = i;
+        });
+      }
 
-    async function onRoute() {
-      const route = parseHash();
-      if (route.page === 'home') { showPage('home'); return; }
-      if (route.page === 'search') { showPage('search'); if (route.q) executeSearch(route.q); return; }
-      if (route.page === 'watch') { showPage('watch'); if (route.v) await loadWatch(route.v); }
+      if (activeIndex === expectedIndex) {
+        setTimeout(() => {
+          renderSearchResultsFromCSE(true);
+          setupPaginationState();
+          pagination.loadingNext = false;
+        }, 100);
+      } else {
+        setTimeout(() => waitForNextPageResults(expectedIndex, attempts + 1), 200);
+      }
     }
 
-    async function fetchWithTimeout(url, opts={}, timeout=6000) {
-      const controller = new AbortController(); const id = setTimeout(() => controller.abort(), timeout);
-      try { const res = await fetch(url, { ...opts, signal: controller.signal }); clearTimeout(id); return res; }
-      catch (e) { clearTimeout(id); throw e; }
-    }
-
+    // iframeを用いた動画の読み込み
     async function loadWatch(videoId) {
       window.scrollTo({ top: 0, behavior: 'instant' });
 
-      // 既存の自前ビデオプレイヤー(videoタグ)を停止・非表示にする
+      const player = document.getElementById('player');
       if (player) {
         player.pause();
         player.removeAttribute('src');
@@ -888,14 +931,13 @@ video {
         document.getElementById('video-title').textContent = '動画';
       }
 
-      // 2. key1.json から result をそのまま取得
+      // 2. example.com から result を取得
       let result = '';
       try {
-        // 実際のAPIエンドポイントがある場合はURLを書き換えてください。
-        const resultRes = await fetch('https://raw.githubusercontent.com/toka-kun/Education/refs/heads/main/keys/key1.json');
+        const resultRes = await fetch('https://example.com');
         result = await resultRes.text(); 
       } catch (e) {
-        console.warn('GitHubからの取得に失敗しました', e);
+        console.warn('example.comからの取得に失敗しました', e);
       }
 
       // 3. iframe を作成して YouTube Education を埋め込む
@@ -905,30 +947,18 @@ video {
         iframe.id = 'youtube-embed-iframe';
         iframe.setAttribute('allowfullscreen', 'true');
         iframe.setAttribute('frameborder', '0');
-        // 動画プレイヤーの枠に合わせてサイズを調整
         iframe.style.width = '100%';
-        iframe.style.height = '100%';
         iframe.style.aspectRatio = '16 / 9';
-        iframe.style.backgroundColor = '#000'; // ロード中の黒背景
+        iframe.style.backgroundColor = '#000';
         
-        // 既存のplayerの直後にiframeを配置
-        player.parentNode.insertBefore(iframe, player.nextSibling);
+        if (player && player.parentNode) {
+          player.parentNode.insertBefore(iframe, player.nextSibling);
+        }
       }
       
-      // iframeを表示し、URLをセット
       iframe.style.display = 'block';
       iframe.src = `https://www.youtubeeducation.com/embed/${encodeURIComponent(videoId)}${result}`;
 
-      // コメントの読み込み
-      loadComments(videoId);
-
-      // 関連動画の読み込み（取得したタイトルを利用）
-      const title = document.getElementById('video-title').textContent || '';
-      const authorFragment = title.split(' - ')[0].split('|')[0].trim();
-      const query = `${authorFragment} ${title.split(' ').slice(0, 3).join(' ')}`.trim();
-      loadRecommendations(query, videoId);
-    }
-
       loadComments(videoId);
 
       const title = document.getElementById('video-title').textContent || '';
@@ -937,207 +967,136 @@ video {
       loadRecommendations(query, videoId);
     }
 
-    function formatDuration(seconds) {
-      if (!seconds || seconds <= 0) return '--:--';
-      const m = Math.floor(seconds / 60); const s = Math.floor(seconds % 60);
-      return `${m}:${String(s).padStart(2, '0')}`;
-    }
-    function formatCount(n) {
-      if (n >= 1_000_000) return (n/1_000_000).toFixed(1).replace(/\.0$/,'') + 'M';
-      if (n >= 1_000) return (n/1_000).toFixed(1).replace(/\.0$/,'') + 'K';
-      return String(n);
-    }
-
-    // --- APIリストを取得するヘルパー関数 ---
-    async function getCommentApiList() {
-      const fallbackApis = [
-        "https://min-tube2-api.vercel.app",
-        "https://min-tube-api-3.vercel.app",
-        "https://min-tube-api4.vercel.app",
-        "https://server-minp.vercel.app",
-        "https://min-tube-api5.vercel.app"
-      ];
-      try {
-        const res = await fetch('https://raw.githubusercontent.com/Minotaur-ZAOU/test/refs/heads/main/min-tube-api.json');
-        if (!res.ok) return fallbackApis;
-        const list = await res.json();
-        // 取得したデータが配列で、かつ1つ以上要素があればそれを使う
-        return (Array.isArray(list) && list.length > 0) ? list : fallbackApis;
-      } catch {
-        return fallbackApis;
-      }
-    }
-
-    // --- 複数のAPIを順番に試す loadComments 関数 ---
-    async function loadComments(videoId) {
-      const status = document.getElementById('comments-status'); const list = document.getElementById('comments-list');
-      status.classList.add('show'); list.innerHTML = '';
-      
-      const apis = await getCommentApiList();
-      let success = false;
-
-      // リストのAPIを順番に試行
-      for (const apiBase of apis) {
-        try {
-          // URL末尾の不要なスラッシュを念のため除去
-          const baseUrl = apiBase.replace(/\/$/, ''); 
-          const res = await fetch(`${baseUrl}/api/comments/${encodeURIComponent(videoId)}`);
-          if (!res.ok) continue; // エラーが返ってきたら次のAPIへ
-          
-          const json = await res.json();
-          document.getElementById('comment-count').textContent = `合計 ${formatCount(json.commentCount || 0)} 件`;
-          status.classList.remove('show');
-          
-          // --- ここからの描画ロジックは既存のものを完全維持 ---
-          const comments = Array.isArray(json.comments) ? json.comments : [];
-          comments.slice(0, 30).forEach(c => {
-            const authorThumb = (c.authorThumbnails && c.authorThumbnails[0] && c.authorThumbnails[0].url) || '';
-            const item = document.createElement('div'); item.className = 'comment';
-            const safeHtml = sanitizeContentHtml(c.contentHtml || escapeHTML(c.content || ''));
-            item.innerHTML = `
-              <img class="avatar" src="${authorThumb}" alt="${escapeHTML(c.author || '')}">
-              <div class="comment-meta">
-                <div class="comment-author">
-                  <span>${escapeHTML(c.author || '')}</span>
-                  ${c.verified ? '<span class="author-badge">認証済み</span>' : ''}
-                  ${c.authorIsChannelOwner ? '<span class="author-badge">チャンネル所有者</span>' : ''}
-                  ${c.isPinned ? '<span class="author-badge">固定</span>' : ''}
-                </div>
-                <div class="comment-content">${safeHtml}</div>
-                <div class="comment-actions">
-                  <span>👍 ${formatCount(c.likeCount || 0)}</span>
-                  <span class="muted">${escapeHTML(c.publishedText || '')}</span>
-                  ${c.replies && c.replies.replyCount ? `<span>返信 ${formatCount(c.replies.replyCount)}</span>` : ''}
-                </div>
-              </div>
-            `;
-            list.appendChild(item);
-          });
-          // --------------------------------------------------
-
-          success = true;
-          break; // データ取得と描画に成功したらループを抜ける
-        } catch {
-          // 通信エラーやJSONパースエラーの場合は次のAPIを試す
-          continue; 
-        }
-      }
-
-      // すべてのAPIで失敗した場合
-      if (!success) {
-        status.innerHTML = `<span class="muted">コメントの取得に失敗しました。</span>`;
-      }
-    }
-
-    function sanitizeContentHtml(html) {
-      const div = document.createElement('div'); div.innerHTML = html;
-      div.querySelectorAll('script').forEach(s => s.remove());
-      const walk = (node) => {
-        if (node.nodeType === 1) {
-          [...node.attributes].forEach(attr => { if (/^on/i.test(attr.name)) node.removeAttribute(attr.name); });
-          if (node.tagName === 'A') { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noopener noreferrer nofollow'); }
-          if (node.tagName === 'IMG') node.remove();
-          node.childNodes.forEach(walk);
-        }
-      };
-      div.childNodes.forEach(walk);
-      return div.innerHTML;
-    }
-
+    // 関連動画の取得
     function loadRecommendations(query, currentVideoId) {
-      const status = document.getElementById('recs-status'); const list = document.getElementById('recs-list');
-      status.classList.add('show'); list.innerHTML = '';
+      const status = document.getElementById('recs-status');
+      const list = document.getElementById('recs-list');
+      status.classList.add('show');
+      list.innerHTML = '';
       try {
-        const elem = cseHiddenElem || google.search.cse.element.getElement('hidden-cse') || google.search.cse.element.getElement('searchresults-only0');
+        const elem = cseHiddenElem || (window.google && google.search && google.search.cse && google.search.cse.element && (google.search.cse.element.getElement('hidden-cse') || google.search.cse.element.getElement('searchresults-only0')));
         if (!elem) { setTimeout(() => loadRecommendations(query, currentVideoId), 200); return; }
+
+        const container = document.getElementById('hidden-cse');
+        if (container) {
+          const resContainer = container.querySelector('.gsc-results');
+          if (resContainer) resContainer.innerHTML = '';
+        }
+
         elem.execute(`site:youtube.com ${query}`);
-        setTimeout(() => {
-          const container = document.getElementById('hidden-cse'); const raw = container.querySelectorAll('.gsc-webResult.gsc-result');
-          const items = [];
-          raw.forEach(r => {
-            const a = r.querySelector('.gs-title a'); if (!a || !a.href) return;
-            const vid = getVideoIdFromUrl(a.href); if (!vid || vid === currentVideoId) return;
-            const title = (a.textContent || '').trim();
-            let channel = ''; const urlEl = r.querySelector('.gs-visibleUrl');
-            if (urlEl) channel = urlEl.textContent.replace(/https?:\/\/(www\.)?youtube\.com\/.*/i, '').trim();
-            const snipEl = r.querySelector('.gs-snippet');
-            if (!channel && snipEl) { const m = snipEl.textContent.match(/by ([^•–-]+)/i); if (m) channel = m[1].trim(); }
-            items.push({ vid, title, channel });
-          });
-          const dedup = []; const seen = new Set();
-          for (const it of items) { if (seen.has(it.vid)) continue; seen.add(it.vid); dedup.push(it); if (dedup.length >= 10) break; }
-          status.classList.remove('show');
-          dedup.forEach(it => {
-            const el = document.createElement('div'); el.className = 'rec-card';
-            el.innerHTML = `
-              <img class="rec-thumb" src="${youTubeThumb(it.vid)}" alt="Thumbnail">
-              <div>
-                <div class="rec-title">${escapeHTML(it.title)}</div>
-                <div class="rec-channel">${escapeHTML(it.channel || 'YouTube')}</div>
-              </div>
-            `;
-            el.addEventListener('click', () => navigateTo(`#/watch?v=${encodeURIComponent(it.vid)}`));
-            list.appendChild(el);
-          });
-          if (!dedup.length) { status.classList.remove('show'); list.innerHTML = '<div class="muted">関連動画が見つかりませんでした。</div>'; }
-        }, 700);
-      } catch { status.classList.remove('show'); list.innerHTML = '<div class="muted">関連動画の取得に失敗しました。</div>'; }
+
+        const checkRecs = (attempts) => {
+          if (attempts > 50) {
+            status.classList.remove('show');
+            list.innerHTML = '<div class="muted">関連動画の取得にタイムアウトしました。</div>';
+            return;
+          }
+          const raw = container.querySelectorAll('.gsc-webResult.gsc-result');
+          const noResultsText = container.innerText || "";
+          if (raw && raw.length > 0) {
+            const items = [];
+            raw.forEach(r => {
+              const a = r.querySelector('.gs-title a'); if (!a || !a.href) return;
+              const vid = getVideoIdFromUrl(a.href); if (!vid || vid === currentVideoId) return;
+              const title = (a.textContent || '').trim();
+              let channel = ''; const urlEl = r.querySelector('.gs-visibleUrl');
+              if (urlEl) channel = urlEl.textContent.replace(/https?:\/\/(www\.)?youtube\.com\/.*/i, '').trim();
+              const snipEl = r.querySelector('.gs-snippet');
+              if (!channel && snipEl) { const m = snipEl.textContent.match(/by ([^•–-]+)/i); if (m) channel = m[1].trim(); }
+              items.push({ vid, title, channel });
+            });
+            const dedup = []; const seen = new Set();
+            for (const it of items) { if (seen.has(it.vid)) continue; seen.add(it.vid); dedup.push(it); if (dedup.length >= 10) break; }
+            status.classList.remove('show');
+            dedup.forEach(it => {
+              const el = document.createElement('div'); el.className = 'rec-card';
+              el.innerHTML = `
+                <img class="rec-thumb" src="${youTubeThumb(it.vid)}" alt="Thumbnail">
+                <div>
+                  <div class="rec-title">${escapeHTML(it.title)}</div>
+                  <div class="rec-channel">${escapeHTML(it.channel || 'YouTube')}</div>
+                </div>
+              `;
+              el.addEventListener('click', () => navigateTo(`#/watch?v=${encodeURIComponent(it.vid)}`));
+              list.appendChild(el);
+            });
+            if (!dedup.length) { status.classList.remove('show'); list.innerHTML = '<div class="muted">関連動画が見つかりませんでした。</div>'; }
+          } else if (noResultsText.includes('一致する') || noResultsText.includes('見つかりません') || noResultsText.includes('No results')) {
+            status.classList.remove('show'); list.innerHTML = '<div class="muted">関連動画が見つかりませんでした。</div>';
+          } else {
+            setTimeout(() => checkRecs(attempts + 1), 200);
+          }
+        };
+        checkRecs(0);
+      } catch (e) {
+        status.classList.remove('show');
+        list.innerHTML = '<div class="muted">関連動画の取得に失敗しました。</div>';
+      }
     }
 
-    (function init(){ showPage('home'); })();
-    onRoute();
-
-    // --- 追加: キーボードショートカット機能 ---
-    document.addEventListener('keydown', (event) => {
-      // 検索ボックスなどに入力中の場合はショートカットを無視する
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) {
+    // コメント取得（ダミー）
+    async function loadComments(videoId) {
+      document.getElementById('comments-status').classList.add('show');
+      document.getElementById('comments-list').innerHTML = '';
+      setTimeout(() => {
+        const dummyComments = [
+          { author: 'User A', text: 'とても参考になりました！' },
+          { author: 'User B', text: '素晴らしい動画ですね。' },
+          { author: 'User C', text: '次回の更新も楽しみにしています。' }
+        ];
+        renderComments(dummyComments);
+      }, 1000);
+    }
+    function renderComments(comments) {
+      document.getElementById('comments-status').classList.remove('show');
+      const list = document.getElementById('comments-list');
+      list.innerHTML = '';
+      if (!comments || comments.length === 0) {
+        list.innerHTML = '<div class="muted">コメントはありません。</div>';
         return;
       }
+      comments.forEach(c => {
+        const el = document.createElement('div');
+        el.className = 'comment';
+        el.innerHTML = `
+          <div class="comment-author">${escapeHTML(c.author)}</div>
+          <div class="comment-text">${escapeHTML(c.text)}</div>
+        `;
+        list.appendChild(el);
+      });
+    }
 
-      // プレイヤーがまだ準備されていない場合は何もしない
-      if (!player || !player.src) return;
+    // 初期化とイベントリスナーの設定
+    document.addEventListener('DOMContentLoaded', () => {
+      initCSE();
+      handleRoute();
 
-      switch (event.key) {
-        case ' ': // スペースキー (再生/一時停止)
-          event.preventDefault(); // スペースキーでの画面スクロールを防ぐ
-          if (player.paused) {
-            player.play();
-          } else {
-            player.pause();
+      // 検索ボタンと入力欄のイベント
+      const searchBtn = document.getElementById('nav-search-btn');
+      const searchInput = document.getElementById('nav-search-input');
+      
+      if (searchBtn && searchInput) {
+        searchBtn.addEventListener('click', () => {
+          const q = searchInput.value.trim();
+          if (q) navigateTo(`#/results?q=${encodeURIComponent(q)}`);
+        });
+
+        searchInput.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            const q = searchInput.value.trim();
+            if (q) navigateTo(`#/results?q=${encodeURIComponent(q)}`);
           }
-          break;
+        });
+      }
 
-        case 'f':
-        case 'F': // fキー (全画面表示の切り替え)
-          event.preventDefault();
-          if (!document.fullscreenElement) {
-            // 全画面にする (Safari対応も含む)
-            if (player.requestFullscreen) {
-              player.requestFullscreen();
-            } else if (player.webkitRequestFullscreen) {
-              player.webkitRequestFullscreen();
-            }
-          } else {
-            // 全画面を解除する
-            if (document.exitFullscreen) {
-              document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-              document.webkitExitFullscreen();
-            }
-          }
-          break;
-
-        case 'ArrowRight': // 右矢印 (10秒進む)
-          event.preventDefault(); // 矢印キーでの画面スクロールを防ぐ
-          player.currentTime = Math.min(player.duration, player.currentTime + 10);
-          break;
-
-        case 'ArrowLeft': // 左矢印 (10秒戻る)
-          event.preventDefault();
-          player.currentTime = Math.max(0, player.currentTime - 10);
-          break;
+      // 「さらに読み込む」ボタンのイベント
+      const nextBtn = document.getElementById('next-page-btn');
+      if (nextBtn) {
+        nextBtn.addEventListener('click', gotoNextPage);
       }
     });
+
+    window.addEventListener('hashchange', handleRoute);
   </script>
 </body>
 </html>
