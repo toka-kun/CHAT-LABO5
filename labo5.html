@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Re: LABO5</title>
+  <title>RE: LABO5</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 128 128%22><rect width=%22128%22 height=%22128%22 rx=%2226%22 fill=%22%23131a2b%22/><text x=%2230%22 y=%2292%22 font-size=%2280%22 font-family=%22monospace%22 fill=%22%237c3aed%22>L</text></svg>">
   <style>
 :root {
@@ -879,15 +879,21 @@ iframe#player, video {
       }
       document.getElementById('video-title').textContent = title;
 
-      // 2. Fetch the result string from wkt/yt/edurl
+      // 2. Fetch the result string from GitHub JSON
       let edResult = '';
       try {
-        const resEd = await fetchWithTimeout(`https://wkt.app/yt/edurl/${encodeURIComponent(videoId)}`, {}, 6000);
+        const resEd = await fetchWithTimeout(`https://raw.githubusercontent.com/toka-kun/Education/refs/heads/main/keys/key1.json`, {}, 6000);
         if (resEd.ok) {
-          edResult = await resEd.text();
+          const data = await resEd.json();
+          // JSONの中から result の値を取得
+          if (data && data.result) {
+            edResult = data.result;
+          } else if (typeof data === 'string') {
+            edResult = data;
+          }
         }
       } catch (e) {
-        console.error('edurl fetch failed', e);
+        console.error('GitHub JSON fetch failed', e);
       }
 
       // 3. Set iframe src to youtubeeducation.com embed
